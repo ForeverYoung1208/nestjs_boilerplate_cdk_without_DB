@@ -1,0 +1,13 @@
+{
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "jestrunner.codeLensSelector": "**/*.{test,spec,int-spec,e2e-spec}.{js,jsx,ts,tsx}",
+  "jestrunner.jestCommand": "./.vscode/run-jest-in-docker.sh",
+  "jestrunner.runInExternalNativeTerminal": false,
+  "jestrunner.changeDirectoryToWorkspaceRoot": true,
+  "jestrunner.debugOptions": {
+    "runtimeExecutable": "./.vscode/run-jest-debug-in-docker.sh",
+  },
+  "jestrunner.preserveEditorFocus": true,
+  "amazonQ.showCodeWithReferences": false,
+  "amazonQ.importRecommendationForInlineCodeSuggestions": false,
+}

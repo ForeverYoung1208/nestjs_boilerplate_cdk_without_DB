@@ -1,0 +1,16 @@
+{
+  "availability-zones:account=652460108554:region=eu-central-1": [
+    "eu-central-1a",
+    "eu-central-1b",
+    "eu-central-1c"
+  ],
+  "hosted-zone:account=652460108554:domainName=for-test.click:region=eu-central-1": {
+    "Id": "/hostedzone/Z02922463EWWL2UZ4E04J",
+    "Name": "for-test.click."
+  },
+  "acknowledged-issue-numbers": [
+    32775,
+    34892,
+    34892
+  ]
+}

@@ -1,0 +1,9 @@
+# Exclude local docker config and data
+docker/
+
+# Common excludes for Node.js projects
+node_modules/
+.git/
+.env
+.github
+.vscode

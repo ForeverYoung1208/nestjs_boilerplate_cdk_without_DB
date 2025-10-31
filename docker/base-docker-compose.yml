@@ -1,0 +1,99 @@
+version: '3.8'
+networks:
+  net:
+    name: ${COMPOSE_PROJECT_NAME}_net
+    driver: bridge
+
+services:
+  api:
+    container_name: ${COMPOSE_PROJECT_NAME}_api
+    depends_on:
+      - db
+      - redis
+    build:
+      context: ./api
+      dockerfile: ./Dockerfile
+    user: "node"
+    networks:
+      - net
+    tty: true
+    command: >
+      bash -c "npm ci
+      && rm -rf dist
+      && nest start"
+
+  worker:
+    container_name: ${COMPOSE_PROJECT_NAME}_worker
+    depends_on:
+      - db
+      - redis
+    build:
+      context: ./api
+      dockerfile: ./Dockerfile
+    networks:
+      - net
+    user: "node"
+    command: >
+      bash -c "nest start:worker"
+
+  db:
+    container_name: ${COMPOSE_PROJECT_NAME}_db
+    build:
+      context: ./postgres
+      dockerfile: Dockerfile
+    networks:
+      - net
+    restart: always       
+
+
+  redis:
+    container_name: ${COMPOSE_PROJECT_NAME}_redis
+    image: redis:7.2.4
+    networks:
+      - net
+    restart: always
+    ports:
+      - ${COMPOSE_REDIS_PORT}:6379
+    command: redis-server
+
+  pgadmin:
+    container_name: ${COMPOSE_PROJECT_NAME}_pgadmin
+    image: dpage/pgadmin4
+    networks:
+      - net
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${COMPOSE_PGADMIN_LOGIN}
+      PGADMIN_DEFAULT_PASSWORD: ${COMPOSE_PGADMIN_PASSWORD}
+    ports:
+      - ${COMPOSE_PGADMIN_PORT}:80
+    depends_on:
+      - db
+
+  build-project:
+    container_name: ${COMPOSE_PROJECT_NAME}_api_builder
+    networks:
+      - net
+    build:
+      context: ../
+      dockerfile: ./docker/api/Dockerfile
+    volumes:
+      - ../:/app
+    command: >
+      bash -c "rm -rf dist
+      && npm ci
+      && npm run build"
+
+  build-doc:
+    container_name: ${COMPOSE_PROJECT_NAME}_doc_builder
+    networks:
+      - net
+    build:
+      context: ../
+      dockerfile: ./docker/api/Dockerfile
+    volumes:
+      - ../:/app
+    command: >
+      bash -c "rm -rf docs
+      && npm ci
+      && npm run doc:generate"
