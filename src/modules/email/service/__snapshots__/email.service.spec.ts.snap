@@ -1,0 +1,8 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`EmailService test email builders, without access to fonts cdn tests email snapshot when using newPostCreatedEmailBuilder 1`] = `
+{
+  "attachments": [],
+  "subject": "New post created",
+}
+`;

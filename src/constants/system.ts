@@ -14,3 +14,5 @@ export enum MailerTransport {
   smtp = 'smtp',
   log = 'log',
 }
+
+export const DEFAULT_TEST_EMAIL = 'siafin2010@gmail.com';
