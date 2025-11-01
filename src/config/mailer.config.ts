@@ -1,12 +1,10 @@
 import { Logger } from '@nestjs/common';
-import { join } from 'path';
 import { MailerTransport } from '../constants/system';
 import MailMessage from 'nodemailer/lib/mailer/mail-message';
 import {
   MailerOptions,
   TransportType,
 } from '@nestjs-modules/mailer/dist/interfaces/mailer-options.interface';
-import { EjsAdapter } from '@nestjs-modules/mailer/dist/adapters/ejs.adapter';
 
 export const getTransport = (): TransportType => {
   if (process.env.MAILER_TRANSPORT === MailerTransport.smtp) {
@@ -56,8 +54,4 @@ export const mailerConfig = (): MailerOptions => ({
     from: process.env.MAIL_FROM_EMAIL,
   },
   preview: false,
-  template: {
-    adapter: new EjsAdapter(),
-    dir: join(__dirname, '../', 'modules/email/templates'),
-  },
 });

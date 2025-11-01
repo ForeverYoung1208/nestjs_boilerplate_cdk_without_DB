@@ -18,19 +18,15 @@ const fullSubDomainNameApi = `${subDomainNameApi}.${domainName}`;
 const userDeploerName = `${projectName}-deployer`;
 
 // database name
-const databaseName = projectShortName + suffix.replace('-', ''); // DatabaseName must begin with a letter and contain only alphanumeric characters
-const databaseUsername = 'postgres';
 const companyName = 'Some Test Company Inc';
 
 console.info('using development config...')  
 
 export const config: IAppStackConfig = {
-  databaseName,
   domainName,
   projectName,
   fullSubDomainNameApi,
   userDeploerName,
-  databaseUsername,
   companyName,
   targetNodeEnv: 'development',
 }

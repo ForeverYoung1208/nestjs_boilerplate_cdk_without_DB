@@ -3,6 +3,7 @@ export const ENV_DEV = 'development';
 export const ENV_STAGING = 'staging';
 export const ENV_PROD = 'production';
 export const ENV_TEST = 'test';
+export const ENV_CI = 'ci';
 
 export const REGEX_DATE_STRING = new RegExp(`\\d{4}-\\d{2}-\\d{2}`);
 export const DATE_FORMAT = 'YYYY-MM-DD';

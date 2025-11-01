@@ -1,7 +1,6 @@
 import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as rds from 'aws-cdk-lib/aws-rds';
 import * as elasticbeanstalk from 'aws-cdk-lib/aws-elasticbeanstalk';
 import * as certificatemanager from 'aws-cdk-lib/aws-certificatemanager';
 import * as route53 from 'aws-cdk-lib/aws-route53';
@@ -9,17 +8,14 @@ import * as s3assets from 'aws-cdk-lib/aws-s3-assets';
 import * as elasticache from 'aws-cdk-lib/aws-elasticache';
 import * as ssm from 'aws-cdk-lib/aws-ssm';
 import * as s3 from 'aws-cdk-lib/aws-s3';
-import { SecretValue } from 'aws-cdk-lib';
 
 import { Construct } from 'constructs';
 
 export interface IAppStackConfig {
-  databaseName: string;
   domainName: string;
   projectName: string;
   fullSubDomainNameApi: string;
   userDeploerName: string;
-  databaseUsername: string;
   companyName: string;
   targetNodeEnv: string;
 }
@@ -34,12 +30,10 @@ export class AppStack extends cdk.Stack {
     super(scope, id, props);
 
     const {
-      databaseName,
       domainName,
       projectName,
       fullSubDomainNameApi,
       userDeploerName,
-      databaseUsername,
       companyName,
       targetNodeEnv,
     } = config;
@@ -63,7 +57,7 @@ export class AppStack extends cdk.Stack {
       .fill(null)
       .map(() => Math.floor(Math.random() * 36).toString(36))
       .join('');
-    const apiKeyParameter = new ssm.StringParameter(
+    const apiKeySSMParameter = new ssm.StringParameter(
       this,
       `${projectName}ApiKeyParameter`,
       {
@@ -73,27 +67,23 @@ export class AppStack extends cdk.Stack {
       },
     );
 
-    const dbPasswordParameterValue = Array(10)
-      .fill(null)
-      .map(() => Math.floor(Math.random() * 36).toString(36))
-      .join('');
-    const dbPasswordParameter = new ssm.StringParameter(
+    const dbPasswordSSMParameter = new ssm.StringParameter(
       this,
       `${projectName}DbPasswordParameter`,
       {
         parameterName: `/${projectName}/db-password`,
-        stringValue: dbPasswordParameterValue,
+        stringValue: 'place-here-db-password',
         description: 'DB password',
       },
     );
 
-    const mailPasswordParameter = new ssm.StringParameter(
+    const mailPasswordSSMParameter = new ssm.StringParameter(
       this,
       `${projectName}MailPasswordParameter`,
       {
         parameterName: `/${projectName}/mail-password`,
         stringValue: 'place-here-mail-password',
-        description: 'API key for the application',
+        description: 'Mail password',
       },
     );
 
@@ -121,7 +111,7 @@ export class AppStack extends cdk.Stack {
         {
           cidrMask: 23,
           name: 'Private',
-          subnetType: ec2.SubnetType.PRIVATE_ISOLATED, // Use PRIVATE_ISOLATED instead of PRIVATE_WITH_EGRESS - no need for aura and redis to access internet
+          subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
         },
       ],
     });
@@ -151,16 +141,6 @@ export class AppStack extends cdk.Stack {
       },
     );
 
-    const workerSecurityGroup = new ec2.SecurityGroup(
-      this,
-      `${projectName}WorkerSecurityGroup`,
-      {
-        vpc,
-        description: 'Security group for Worker',
-        allowAllOutbound: true,
-      },
-    );
-
     const albSecurityGroup = new ec2.SecurityGroup(
       this,
       `${projectName}AlbSecurityGroup`,
@@ -184,91 +164,12 @@ export class AppStack extends cdk.Stack {
     );
 
     // VVV todo: remove after debugging - leave connection possibility only through bastion (uncomment if want to have direct access)
-    // apiSecurityGroup.addIngressRule(
-    //   ec2.Peer.anyIpv4(),
-    //   ec2.Port.tcp(22),
-    //   'Allow ssh',
-    // );
+    apiSecurityGroup.addIngressRule(
+      ec2.Peer.anyIpv4(),
+      ec2.Port.tcp(22),
+      'Allow ssh',
+    );
     // ^^^
-
-    /**
-     *
-     *
-     *
-     * DATABASE
-     *
-     *
-     *
-     */
-
-    const engine = rds.DatabaseClusterEngine.auroraPostgres({
-      version: rds.AuroraPostgresEngineVersion.VER_15_7,
-    });
-    // Aurora PostgreSQL Serverless
-    const dbSecurityGroup = new ec2.SecurityGroup(
-      this,
-      `${projectName}DatabaseSecurityGroup`,
-      {
-        vpc,
-        description: 'Security group for RDS',
-        allowAllOutbound: true,
-      },
-    );
-
-    dbSecurityGroup.addIngressRule(
-      apiSecurityGroup,
-      ec2.Port.tcp(5432),
-      'Allow PostgreSQL access from API',
-    );
-
-    const dbCluster = new rds.DatabaseCluster(this, `${projectName}AuroraDB`, {
-      engine,
-      vpc,
-      vpcSubnets: {
-        subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
-      },
-      securityGroups: [dbSecurityGroup],
-      writer: rds.ClusterInstance.serverlessV2('writer'),
-      serverlessV2MinCapacity: 0.5, // Minimum ACU (0.5 is the minimum?)
-      serverlessV2MaxCapacity: 1, // Maximum ACU
-      parameterGroup: new rds.ParameterGroup(
-        this,
-        `${projectName}RdsParameterGroup`,
-        {
-          engine,
-          parameters: {
-            // Terminate idle session for Aurora Serverless V2 auto-pause
-            idle_session_timeout: '60000',
-          },
-        },
-      ),
-
-      defaultDatabaseName: databaseName,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      credentials: rds.Credentials.fromPassword(
-        databaseUsername,
-        SecretValue.unsafePlainText(dbPasswordParameterValue),
-      ),
-    });
-
-    // workaround to set minimum capacity to 0 to allow full stop of the database if not used
-    (dbCluster.node.defaultChild as cdk.CfnResource).addPropertyOverride(
-      'ServerlessV2ScalingConfiguration.MinCapacity',
-      0,
-    );
-
-    // assign necessary access permissions
-    dbCluster.connections.allowFrom(
-      apiSecurityGroup,
-      ec2.Port.tcp(5432),
-      'Allow database access from API',
-    );
-
-    dbCluster.connections.allowFrom(
-      workerSecurityGroup,
-      ec2.Port.tcp(5432),
-      'Allow database access from Worker',
-    );
 
     /**
      *
@@ -294,12 +195,6 @@ export class AppStack extends cdk.Stack {
       apiSecurityGroup,
       ec2.Port.tcp(6379),
       'Allow Redis access from API',
-    );
-
-    redisSecurityGroup.addIngressRule(
-      workerSecurityGroup,
-      ec2.Port.tcp(6379),
-      'Allow Redis access from Worker',
     );
 
     // Redis parameter group with noeviction policy
@@ -340,7 +235,7 @@ export class AppStack extends cdk.Stack {
      *
      *
      *
-     * API AND WORKER
+     * API
      *
      *
      *
@@ -437,14 +332,15 @@ export class AppStack extends cdk.Stack {
       `${projectName}AppVersion`,
       appAsset,
     );
-    const commonEnvVars = [
+    const envVars = [
       ...this.createEnvironmentVariables({
         NODE_ENV: targetNodeEnv,
         PORT: '3000',
         SITE_ORIGIN: `https://${fullSubDomainNameApi}`,
-        DB_HOST: dbCluster.clusterEndpoint.hostname,
-        DB_PORT: dbCluster.clusterEndpoint.port.toString(),
-        DB_DATABASE: databaseName,
+        DB_HOST: 'change to real dbHost',
+        DB_PORT: 'change to real dbPort',
+        DB_DATABASE: 'change to real dbName',
+        DB_USERNAME: 'change to real dbUsername',
         REDIS_HOST: redis.attrRedisEndpointAddress,
         REDIS_PORT: redis.attrRedisEndpointPort,
         TYPEORM_LOGGING: 'false',
@@ -456,23 +352,22 @@ export class AppStack extends cdk.Stack {
         MAIL_USERNAME: 'siafin2010@gmail.com',
         MAIL_FROM_EMAIL: 'ihor.shcherbyna@clockwise.software',
         COMPANY_NAME: companyName,
-        DB_USERNAME: databaseUsername,
       }),
 
       {
         namespace: 'aws:elasticbeanstalk:application:environmentsecrets',
         optionName: 'API_KEY',
-        value: apiKeyParameter.parameterArn,
+        value: apiKeySSMParameter.parameterArn,
       },
       {
         namespace: 'aws:elasticbeanstalk:application:environmentsecrets',
         optionName: 'MAIL_PASSWORD',
-        value: mailPasswordParameter.parameterArn,
+        value: mailPasswordSSMParameter.parameterArn,
       },
       {
         namespace: 'aws:elasticbeanstalk:application:environmentsecrets',
         optionName: 'DB_PASSWORD',
-        value: dbPasswordParameter.parameterArn,
+        value: dbPasswordSSMParameter.parameterArn,
       },
     ];
 
@@ -480,39 +375,6 @@ export class AppStack extends cdk.Stack {
       keyName: `${projectName}-api-key`,
     });
 
-    const commonOptionSettings: elasticbeanstalk.CfnEnvironment.OptionSettingProperty[] =
-      [
-        {
-          namespace: 'aws:ec2:vpc',
-          optionName: 'VPCId',
-          value: vpc.vpcId,
-        },
-        {
-          namespace: 'aws:autoscaling:launchconfiguration',
-          optionName: 'IamInstanceProfile',
-          value: ebInstanceProfile.attrArn,
-        },
-        {
-          namespace: 'aws:ec2:instances',
-          optionName: 'InstanceTypes',
-          value: 't3.medium', // todo: reduce after debugging
-        },
-        {
-          namespace: 'aws:elasticbeanstalk:cloudwatch:logs',
-          optionName: 'StreamLogs',
-          value: 'true',
-        },
-        {
-          namespace: 'aws:elasticbeanstalk:cloudwatch:logs:health',
-          optionName: 'HealthStreamingEnabled',
-          value: 'true',
-        },
-        {
-          namespace: 'aws:autoscaling:launchconfiguration',
-          optionName: 'EC2KeyName',
-          value: keyPairApi.keyName,
-        },
-      ];
 
     const apiEnvironment = new elasticbeanstalk.CfnEnvironment(
       this,
@@ -526,7 +388,36 @@ export class AppStack extends cdk.Stack {
         },
         solutionStackName: '64bit Amazon Linux 2023 v6.6.0 running Node.js 22', // Choose appropriate platform
         optionSettings: [
-          ...commonOptionSettings,
+          {
+            namespace: 'aws:ec2:vpc',
+            optionName: 'VPCId',
+            value: vpc.vpcId,
+          },
+          {
+            namespace: 'aws:autoscaling:launchconfiguration',
+            optionName: 'IamInstanceProfile',
+            value: ebInstanceProfile.attrArn,
+          },
+          {
+            namespace: 'aws:ec2:instances',
+            optionName: 'InstanceTypes',
+            value: 't3.medium', // todo: reduce after debugging
+          },
+          {
+            namespace: 'aws:elasticbeanstalk:cloudwatch:logs',
+            optionName: 'StreamLogs',
+            value: 'true',
+          },
+          {
+            namespace: 'aws:elasticbeanstalk:cloudwatch:logs:health',
+            optionName: 'HealthStreamingEnabled',
+            value: 'true',
+          },
+          {
+            namespace: 'aws:autoscaling:launchconfiguration',
+            optionName: 'EC2KeyName',
+            value: keyPairApi.keyName,
+          },
           {
             namespace: 'aws:ec2:vpc',
             optionName: 'Subnets',
@@ -608,77 +499,7 @@ export class AppStack extends cdk.Stack {
             optionName: 'UnhealthyThresholdCount',
             value: '10',
           },
-          ...commonEnvVars,
-        ],
-        versionLabel,
-      },
-    );
-
-    // Create Worker environment
-    const workerEnvironment = new elasticbeanstalk.CfnEnvironment(
-      this,
-      `${projectName}WorkerEnvironment`,
-      {
-        environmentName: `${projectName}-Worker-Environment`,
-        applicationName: app.applicationName,
-        solutionStackName: '64bit Amazon Linux 2023 v6.6.0 running Node.js 22', // Choose appropriate platform
-        tier: {
-          name: 'Worker',
-          type: 'SQS/HTTP',
-        },
-        optionSettings: [
-          ...commonOptionSettings,
-          {
-            namespace: 'aws:ec2:vpc',
-            optionName: 'Subnets',
-            value: vpc.publicSubnets.map((subnet) => subnet.subnetId).join(','), // Use public subnets for internet access. Internet access is needded for elastic beanstalk to finish deployment.
-          },
-          {
-            namespace: 'aws:autoscaling:launchconfiguration',
-            optionName: 'SecurityGroups',
-            value: workerSecurityGroup.securityGroupId,
-          },
-          {
-            namespace: 'aws:elasticbeanstalk:application:environment',
-            optionName: 'MODE',
-            value: 'WORKER',
-          },
-          {
-            namespace: 'aws:autoscaling:asg',
-            optionName: 'MinSize',
-            value: '1',
-          },
-          {
-            namespace: 'aws:autoscaling:asg',
-            optionName: 'MaxSize',
-            value: '1',
-          },
-          {
-            namespace: 'aws:elasticbeanstalk:environment',
-            optionName: 'EnvironmentType',
-            value: 'SingleInstance', // This ensures single instance deployment
-          },
-          {
-            namespace: 'aws:autoscaling:launchconfiguration',
-            optionName: 'DisableIMDSv1',
-            value: 'true',
-          },
-          {
-            namespace: 'aws:ec2:vpc',
-            optionName: 'AssociatePublicIpAddress',
-            value: 'true',
-          },
-          {
-            namespace: 'aws:elasticbeanstalk:healthreporting:system',
-            optionName: 'SystemType',
-            value: 'enhanced', // Enable enhanced health reporting
-          },
-          {
-            namespace: 'aws:autoscaling:launchconfiguration',
-            optionName: 'MonitoringInterval',
-            value: '5 minutes', // Enable detailed monitoring
-          },
-          ...commonEnvVars,
+          ...envVars,
         ],
         versionLabel,
       },
@@ -705,11 +526,10 @@ export class AppStack extends cdk.Stack {
     // Allow SSH access
     bastionSecurityGroup.addIngressRule(
       ec2.Peer.anyIpv4(),
-      // ec2.Peer.ipv4('YOUR_IP_ADDRESS/32'),  // Replace with your IP address if want to restrict
       ec2.Port.tcp(22),
       'Allow SSH',
     );
-    // Add this after VPC definition but before the bastion host
+
     const keyPair = new ec2.CfnKeyPair(this, `${projectName}BastionKeyPair`, {
       keyName: `${projectName}-bastion-key`,
     });
@@ -718,7 +538,7 @@ export class AppStack extends cdk.Stack {
     const bastion = new ec2.Instance(this, `${projectName}BastionHost`, {
       vpc,
       vpcSubnets: {
-        subnetType: ec2.SubnetType.PUBLIC, // Place in public subnet
+        subnetType: ec2.SubnetType.PUBLIC,
       },
       securityGroup: bastionSecurityGroup,
       instanceType: ec2.InstanceType.of(
@@ -735,13 +555,6 @@ export class AppStack extends cdk.Stack {
       ),
     });
 
-    // Allow bastion to access Aurora
-    dbSecurityGroup.addIngressRule(
-      bastionSecurityGroup,
-      ec2.Port.tcp(5432),
-      'Allow PostgreSQL access from Bastion',
-    );
-
     // Allow bastion to access Redis
     redisSecurityGroup.addIngressRule(
       bastionSecurityGroup,
@@ -754,13 +567,6 @@ export class AppStack extends cdk.Stack {
       bastionSecurityGroup,
       ec2.Port.tcp(22),
       'Allow SSH access from Bastion to API',
-    );
-
-    // Allow bastion to access Worker
-    workerSecurityGroup.addIngressRule(
-      bastionSecurityGroup,
-      ec2.Port.tcp(22),
-      'Allow bastion to access Worker',
     );
 
     /**
@@ -783,28 +589,12 @@ export class AppStack extends cdk.Stack {
 
     // Add explicit dependencies
 
-    workerEnvironment.addDependency(
-      workerSecurityGroup.node.defaultChild as cdk.CfnResource,
-    );
     apiEnvironment.addDependency(
       apiSecurityGroup.node.defaultChild as cdk.CfnResource,
     );
-
-    workerEnvironment.addDependency(vpc.node.defaultChild as cdk.CfnResource);
     apiEnvironment.addDependency(vpc.node.defaultChild as cdk.CfnResource);
 
-    // workerEnvironment.addDependency(
-    //   // addDependency expects a CfnResource type, but DatabaseCluster is a higher-level construct. Access the underlying CloudFormation resource using the node.defaultChild property
-    //   dbCluster.node.defaultChild as cdk.CfnResource,
-    // );
-    // apiEnvironment.addDependency(
-    //   dbCluster.node.defaultChild as cdk.CfnResource,
-    // );
-
-    // workerEnvironment.addDependency(redis);
-    // apiEnvironment.addDependency(redis);
-
-    // Add IAM user to deploy code
+   // Add IAM user to deploy code
     const userDeploer = new iam.User(this, `${projectName}Deployer`, {
       userName: userDeploerName,
     });
@@ -962,21 +752,7 @@ export class AppStack extends cdk.Stack {
       description: 'Command to get API instance public DNS for SSH access',
     });
 
-    new cdk.CfnOutput(this, 'WorkerInstanceAddress', {
-      value: `aws ec2 describe-instances --filters "Name=tag:elasticbeanstalk:environment-name,Values=${workerEnvironment.environmentName}" "Name=instance-state-name,Values=running" --query "Reservations[0].Instances[0].PublicIpAddress" --output text`,
-      description:
-        'IP(case single instance)/URL(case ALB) of the WORKER instance',
-    });
-
     // Outputs for connecting via Bastion
-    new cdk.CfnOutput(this, 'AuroraClusterEndpoint', {
-      value: dbCluster.clusterEndpoint.hostname,
-      description: 'Aurora RDS cluster endpoint hostname',
-    });
-    new cdk.CfnOutput(this, 'AuroraClusterPort', {
-      value: dbCluster.clusterEndpoint.port.toString(),
-      description: 'Aurora RDS cluster port',
-    });
     new cdk.CfnOutput(this, 'RedisEndpoint', {
       value: redis.attrRedisEndpointAddress,
       description: 'Redis cluster endpoint address',
@@ -1000,11 +776,13 @@ export class AppStack extends cdk.Stack {
       value: apiEnvironment.environmentName || 'undefined - Error!',
       description: 'ApiEnvironmentName',
     });
-
-    new cdk.CfnOutput(this, 'WorkerEnvironmentName', {
-      value: workerEnvironment.environmentName || 'undefined - Error!',
-      description: 'WorkerEnvironmentName',
+    
+    
+    new cdk.CfnOutput(this, 'VpcArn', {
+      value: vpc.vpcArn,
+      description: 'VPC ARN',
     });
+    
   }
 
   /// ===========

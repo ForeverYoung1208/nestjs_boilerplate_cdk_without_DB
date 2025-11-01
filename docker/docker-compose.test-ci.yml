@@ -7,7 +7,7 @@ services:
       context: ./postgres      
       dockerfile: Dockerfile
     environment:
-      POSTGRES_DB: someproject_test
+      POSTGRES_DB: database_test
       POSTGRES_USER: username_test
       POSTGRES_PASSWORD: password_test
     ports:

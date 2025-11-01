@@ -25,12 +25,12 @@ const companyName = 'Some Test Company Inc';
 console.info('using staging config...')    
 
 export const config: IAppStackConfig = {
-  databaseName,
+  dbName: databaseName,
   domainName,
   projectName,
   fullSubDomainNameApi,
   userDeploerName,
-  databaseUsername,
+  dbUsername: databaseUsername,
   companyName,
   targetNodeEnv: 'staging',
 }

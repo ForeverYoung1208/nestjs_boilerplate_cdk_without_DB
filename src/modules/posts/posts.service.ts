@@ -1,29 +1,28 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { Post } from '../../entities/post.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { CreatePostDto } from './dtos/createPost.dto';
 import { EmailService } from '../email/service/email.service';
-import { IEmailServiceForPosts } from './interfaces-need/email.service.interface';
 
 @Injectable()
 export class PostsService {
   constructor(
     @InjectRepository(Post)
     private readonly postsRepositry: Repository<Post>,
-    @Inject(EmailService)
-    private readonly emailService: IEmailServiceForPosts,
+    private readonly emailService: EmailService,
   ) {}
 
   async create(createPostDto: CreatePostDto): Promise<Post> {
-    const res = await this.postsRepositry.save(createPostDto);
-    this.emailService.sendPostCreatedNotificationMail(
-      'siafin2010@gmail.com',
-      res,
-    );
+    const newPost = await this.postsRepositry.save(createPostDto);
+    const email = this.emailService.newPostCreatedEmailBuilder.build({
+      newPost,
+    });
 
-    console.log(res);
-    return res;
+    this.emailService.sendEmail('siafin2010@gmail.com', email);
+
+    console.log(newPost);
+    return newPost;
   }
 
   async findAll(): Promise<Post[]> {

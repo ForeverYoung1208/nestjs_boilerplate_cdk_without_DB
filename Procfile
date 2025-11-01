@@ -1,1 +1,1 @@
-app: node dist/ebstart
+app: node dist/main

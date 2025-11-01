@@ -9,6 +9,10 @@ import { PostsController } from './modules/posts/posts.controller';
 import { addTransactionalDataSource } from 'typeorm-transactional';
 import { DataSource } from 'typeorm';
 import { AuthModule } from './modules/auth/auth.module';
+import { BullModule } from '@nestjs/bullmq';
+import { EmailModule } from './modules/email/email.module';
+import { EMAIL_QUEUE_NAME } from './constants/queues';
+import { ProcessorsModule } from './processors/processors.module';
 
 @Module({
   imports: [
@@ -28,6 +32,15 @@ import { AuthModule } from './modules/auth/auth.module';
     }),
     AuthModule,
     PostsModule,
+    BullModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (configService: ConfigService) =>
+        configService.get('queueConfig')(),
+    }),
+    BullModule.registerQueue({ name: EMAIL_QUEUE_NAME }),
+    EmailModule,
+    ProcessorsModule,
   ],
   controllers: [AppController, PostsController],
   providers: [AppService],

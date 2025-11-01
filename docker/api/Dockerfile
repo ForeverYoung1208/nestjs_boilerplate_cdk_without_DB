@@ -1,7 +1,7 @@
 # Local environment
 
 # Base image
-FROM node:22.14-alpine3.21
+FROM node:24.11.0-alpine3.22
 
 RUN apk add --no-cache bash
 
