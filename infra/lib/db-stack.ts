@@ -1,6 +1,7 @@
 import * as cdk from 'aws-cdk-lib';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as rds from 'aws-cdk-lib/aws-rds';
+import * as cr from 'aws-cdk-lib/custom-resources';
 import { SecretValue } from 'aws-cdk-lib';
 
 import { Construct } from 'constructs';
@@ -8,36 +9,45 @@ import { Construct } from 'constructs';
 export interface IDBStackConfig {
   databaseName: string;
   databaseUsername: string;
-  dbPasswordParameterValue: string;
   projectName: string;
-  apiSecurityGroup: ec2.SecurityGroup,
-  vpc: ec2.Vpc,
+  apiSecurityGroupId: string;
+  bastionSecurityGroupId: string;
+  vpcId: string;
+  dbPasswordParameterName: string;
 }
 
-export class AppStack extends cdk.Stack {
+export class DbStack extends cdk.Stack {
   constructor(
     scope: Construct,
     id: string,
     {
       databaseName,
       databaseUsername,
-      dbPasswordParameterValue,
       projectName,
-      apiSecurityGroup,
-      vpc,
+      apiSecurityGroupId,
+      bastionSecurityGroupId,
+      vpcId,
+      dbPasswordParameterName,
     }: IDBStackConfig,
     props?: cdk.StackProps,
   ) {
-    super(scope, id, props);    
-    /**
-     *
-     *
-     *
-     * DATABASE
-     *
-     *
-     *
-     */
+    super(scope, id, props);
+
+    const apiSecurityGroup = ec2.SecurityGroup.fromLookupById(
+      this,
+      `${projectName}ApiSecurityGroup`,
+      apiSecurityGroupId,
+    );
+
+    const bastionSecurityGroup = ec2.SecurityGroup.fromLookupById(
+      this,
+      `${projectName}BastionSecurityGroup`,
+      bastionSecurityGroupId,
+    );
+
+    const vpc = ec2.Vpc.fromLookup(this, `${projectName}Vpc`, {
+      vpcId,
+    });
 
     const engine = rds.DatabaseClusterEngine.auroraPostgres({
       version: rds.AuroraPostgresEngineVersion.VER_15_7,
@@ -58,6 +68,47 @@ export class AppStack extends cdk.Stack {
       ec2.Port.tcp(5432),
       'Allow PostgreSQL access from API',
     );
+
+    const dbPasswordParameterValue = Array(10)
+      .fill(null)
+      .map(() => Math.floor(Math.random() * 36).toString(36))
+      .join('');
+
+    // Upsert DB password parameter
+    new cr.AwsCustomResource(this, `${projectName}DbPasswordUpsert`, {
+      onCreate: {
+        service: 'SSM',
+        action: 'putParameter',
+        parameters: {
+          Name: dbPasswordParameterName,
+          Value: dbPasswordParameterValue,
+          Type: 'SecureString', // or 'String' if that’s how it was created
+          Overwrite: true,
+        },
+        physicalResourceId: cr.PhysicalResourceId.of(
+          `${dbPasswordParameterName}-v1`,
+        ),
+      },
+      onUpdate: {
+        service: 'SSM',
+        action: 'putParameter',
+        parameters: {
+          Name: dbPasswordParameterName,
+          Value: dbPasswordParameterValue,
+          Type: 'SecureString',
+          Overwrite: true,
+        },
+        physicalResourceId: cr.PhysicalResourceId.of(
+          `${dbPasswordParameterName}-v1`,
+        ),
+      },
+      policy: cr.AwsCustomResourcePolicy.fromSdkCalls({
+        resources: [
+          // Use the parameter ARN if you have it, else fallback to '*'
+          'arn:aws:ssm:*',
+        ],
+      }),
+    });
 
     const dbCluster = new rds.DatabaseCluster(this, `${projectName}AuroraDB`, {
       engine,
@@ -108,6 +159,21 @@ export class AppStack extends cdk.Stack {
       ec2.Port.tcp(5432),
       'Allow PostgreSQL access from Bastion',
     );
-    
+
+    new cdk.CfnOutput(this, `${projectName}DbClusterEndpoint`, {
+      value: dbCluster.clusterEndpoint.socketAddress,
+    });
+
+    new cdk.CfnOutput(this, `${projectName}DatabaseName`, {
+      value: databaseName,
+    });
+
+    new cdk.CfnOutput(this, `${projectName}DbUsername`, {
+      value: databaseUsername,
+    });
+
+    new cdk.CfnOutput(this, `${projectName}Port`, {
+      value: '5432',
+    });
   }
 }

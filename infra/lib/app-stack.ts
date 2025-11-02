@@ -18,6 +18,9 @@ export interface IAppStackConfig {
   userDeploerName: string;
   companyName: string;
   targetNodeEnv: string;
+  existingVpcId?: string;
+  existingApiSGId?: string;
+  existingBastionSGId?: string;  
 }
 
 export class AppStack extends cdk.Stack {
@@ -36,6 +39,9 @@ export class AppStack extends cdk.Stack {
       userDeploerName,
       companyName,
       targetNodeEnv,
+      existingVpcId,
+      existingApiSGId,
+      existingBastionSGId
     } = config;
 
     /**
@@ -66,16 +72,28 @@ export class AppStack extends cdk.Stack {
         description: 'API key for the application',
       },
     );
-
-    const dbPasswordSSMParameter = new ssm.StringParameter(
-      this,
-      `${projectName}DbPasswordParameter`,
-      {
-        parameterName: `/${projectName}/db-password`,
-        stringValue: 'place-here-db-password',
-        description: 'DB password',
-      },
-    );
+    
+    let dbPasswordSSMParameter: ssm.IStringParameter;
+    try {
+      dbPasswordSSMParameter = ssm.StringParameter.fromStringParameterName(
+        this,
+        `${projectName}DbPasswordParameter`,
+        `/${projectName}/db-password`,
+      );
+    } catch (error) {
+      // Create new parameter if it doesn't exist
+      const param = new ssm.StringParameter(
+        this,
+        `${projectName}DbPasswordParameter`,
+        {
+          parameterName: `/${projectName}/db-password`,
+          stringValue: 'place-here-db-password',
+          description: 'DB password',
+        }
+      );
+      param.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
+      dbPasswordSSMParameter = param;
+    }
 
     const mailPasswordSSMParameter = new ssm.StringParameter(
       this,
@@ -98,23 +116,34 @@ export class AppStack extends cdk.Stack {
      */
 
     // VPC
-    const vpc = new ec2.Vpc(this, `${projectName}VPC`, {
-      ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/16'),
-      maxAzs: 2, // Need 2 AZs for Aurora
-      natGateways: 0,
-      subnetConfiguration: [
-        {
-          cidrMask: 24,
-          name: 'Public',
-          subnetType: ec2.SubnetType.PUBLIC,
-        },
-        {
-          cidrMask: 23,
-          name: 'Private',
-          subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
-        },
-      ],
-    });
+    let vpc: ec2.IVpc;
+    try {
+      // Try to look up existing VPC
+      vpc = ec2.Vpc.fromLookup(this, `${projectName}Vpc`, {
+        vpcId: existingVpcId,
+      });
+    } catch (e) {
+      // Create new VPC if it doesn't exist
+      const newVpc = new ec2.Vpc(this, `${projectName}VPC`, {
+        ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/16'),
+        maxAzs: 2, // Need 2 AZs for Aurora
+        natGateways: 0,
+        subnetConfiguration: [
+          {
+            cidrMask: 24,
+            name: 'Public',
+            subnetType: ec2.SubnetType.PUBLIC,
+          },
+          {
+            cidrMask: 23,
+            name: 'Private',
+            subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+          },
+        ],
+      });
+      newVpc.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
+      vpc = newVpc;
+    }
 
     //Lookup the zone based on domain name
     const zone = route53.HostedZone.fromLookup(this, `${projectName}Zone`, {
@@ -131,15 +160,32 @@ export class AppStack extends cdk.Stack {
       },
     );
 
-    const apiSecurityGroup = new ec2.SecurityGroup(
-      this,
-      `${projectName}ApiSecurityGroup`,
-      {
-        vpc,
-        description: 'Serurity group for API',
-        allowAllOutbound: true,
-      },
-    );
+    let apiSecurityGroup: ec2.ISecurityGroup;
+    try {
+      if (existingApiSGId) {
+        apiSecurityGroup = ec2.SecurityGroup.fromLookupById(
+          this,
+          `${projectName}ApiSecurityGroup`,
+          existingApiSGId,
+        );
+      } else {
+        throw new Error('No existing security group ID provided');
+      }
+    } catch (e) {
+      // Create new security group if lookup fails or no ID provided
+      const newSg = new ec2.SecurityGroup(
+        this,
+        `${projectName}ApiSecurityGroup`,
+        {
+          vpc,
+          description: 'Security group for API',
+          allowAllOutbound: true,
+        }
+      );
+      newSg.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
+      apiSecurityGroup = newSg;
+    }
+
 
     const albSecurityGroup = new ec2.SecurityGroup(
       this,
@@ -304,7 +350,7 @@ export class AppStack extends cdk.Stack {
         ],
         resources: ['*'],
       }),
-    );    
+    );
 
     // Create instance profile
     const ebInstanceProfile = new iam.CfnInstanceProfile(
@@ -374,7 +420,6 @@ export class AppStack extends cdk.Stack {
     const keyPairApi = new ec2.CfnKeyPair(this, `${projectName}ApiKeyPair`, {
       keyName: `${projectName}-api-key`,
     });
-
 
     const apiEnvironment = new elasticbeanstalk.CfnEnvironment(
       this,
@@ -514,15 +559,33 @@ export class AppStack extends cdk.Stack {
      *
      *
      */
-    const bastionSecurityGroup = new ec2.SecurityGroup(
-      this,
-      `${projectName}BastionSecurityGroup`,
-      {
-        vpc,
-        description: 'Security group for Bastion Host',
-        allowAllOutbound: true,
-      },
-    );
+      
+    let bastionSecurityGroup: ec2.ISecurityGroup;
+    try {
+      if (existingBastionSGId) {
+        bastionSecurityGroup = ec2.SecurityGroup.fromLookupById(
+          this,
+          `${projectName}BastionSecurityGroup`,
+          existingBastionSGId,
+        );
+      } else {
+        throw new Error('No existing bastion security group ID provided');
+      }
+    } catch (e) {
+      // Create new security group if lookup fails or no ID provided
+      const newSg = new ec2.SecurityGroup(
+        this,
+        `${projectName}BastionSecurityGroup`,
+        {
+          vpc,
+          description: 'Security group for Bastion Host',
+          allowAllOutbound: true,
+        }
+      );
+      newSg.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
+      bastionSecurityGroup = newSg;
+    }
+      
     // Allow SSH access
     bastionSecurityGroup.addIngressRule(
       ec2.Peer.anyIpv4(),
@@ -587,14 +650,15 @@ export class AppStack extends cdk.Stack {
 
     apiAlias.node.addDependency(apiEnvironment);
 
-    // Add explicit dependencies
+    // Only add dependencies if they are not imported resources
+    if (apiSecurityGroup instanceof ec2.SecurityGroup) {  // Only true for newly created security groups
+      apiEnvironment.addDependency(apiSecurityGroup.node.defaultChild as cdk.CfnResource);
+    }
+    if (vpc instanceof ec2.Vpc) {  // Only true for newly created VPCs
+      apiEnvironment.addDependency(vpc.node.defaultChild as cdk.CfnResource);
+    }
 
-    apiEnvironment.addDependency(
-      apiSecurityGroup.node.defaultChild as cdk.CfnResource,
-    );
-    apiEnvironment.addDependency(vpc.node.defaultChild as cdk.CfnResource);
-
-   // Add IAM user to deploy code
+    // Add IAM user to deploy code
     const userDeploer = new iam.User(this, `${projectName}Deployer`, {
       userName: userDeploerName,
     });
@@ -776,13 +840,26 @@ export class AppStack extends cdk.Stack {
       value: apiEnvironment.environmentName || 'undefined - Error!',
       description: 'ApiEnvironmentName',
     });
-    
-    
-    new cdk.CfnOutput(this, 'VpcArn', {
-      value: vpc.vpcArn,
-      description: 'VPC ARN',
+
+    new cdk.CfnOutput(this, 'VpcId', {
+      value: vpc.vpcId,
+      description: 'VPC ID - used in DB stack',
     });
-    
+
+    new cdk.CfnOutput(this, 'ApiSecurityGroupId', {
+      value: apiSecurityGroup.securityGroupId,
+      description: 'API Security Group ID - used in DB stack',
+    });
+
+    new cdk.CfnOutput(this, 'BastionSecurityGroupId', {
+      value: bastionSecurityGroup.securityGroupId,
+      description: 'Bastion Security Group ID - used in DB stack',
+    });
+
+    new cdk.CfnOutput(this, 'DbPasswordParameterName', {
+      value: dbPasswordSSMParameter.parameterName,
+      description: 'DB password parameter name',
+    });
   }
 
   /// ===========
