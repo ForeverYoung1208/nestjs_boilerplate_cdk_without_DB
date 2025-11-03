@@ -41,7 +41,7 @@ export class AppStack extends cdk.Stack {
       targetNodeEnv,
       existingVpcId,
       existingApiSGId,
-      existingBastionSGId
+      existingBastionSGId,
     } = config;
 
     /**
@@ -69,31 +69,20 @@ export class AppStack extends cdk.Stack {
       {
         parameterName: `/${projectName}/api-key`,
         stringValue: apiKeySecretValue,
-        description: 'API key for the application',
+        description: `API key for the ${projectName} application`,
       },
     );
-    
-    let dbPasswordSSMParameter: ssm.IStringParameter;
-    try {
-      dbPasswordSSMParameter = ssm.StringParameter.fromStringParameterName(
-        this,
-        `${projectName}DbPasswordParameter`,
-        `/${projectName}/db-password`,
-      );
-    } catch (error) {
-      // Create new parameter if it doesn't exist
-      const param = new ssm.StringParameter(
-        this,
-        `${projectName}DbPasswordParameter`,
-        {
-          parameterName: `/${projectName}/db-password`,
-          stringValue: 'place-here-db-password',
-          description: 'DB password',
-        }
-      );
-      param.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
-      dbPasswordSSMParameter = param;
-    }
+
+    const dbPasswordSSMParameter = new ssm.StringParameter(
+      this,
+      `${projectName}DbPasswordParameter`,
+      {
+        parameterName: `/${projectName}/db-password`,
+        stringValue: 'place-here-db-password', // This will be used if parameter doesn't exist
+        description: `Database password for ${projectName}`,
+      },
+    );
+    dbPasswordSSMParameter.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
 
     const mailPasswordSSMParameter = new ssm.StringParameter(
       this,
@@ -101,7 +90,7 @@ export class AppStack extends cdk.Stack {
       {
         parameterName: `/${projectName}/mail-password`,
         stringValue: 'place-here-mail-password',
-        description: 'Mail password',
+        description: `Mail password for the ${projectName} application`,
       },
     );
 
@@ -119,6 +108,11 @@ export class AppStack extends cdk.Stack {
     let vpc: ec2.IVpc;
     try {
       // Try to look up existing VPC
+      if (!existingVpcId) {
+        throw new Error(
+          'No existing VPC ID provided, proceed to create new VPC',
+        );
+      }
       vpc = ec2.Vpc.fromLookup(this, `${projectName}Vpc`, {
         vpcId: existingVpcId,
       });
@@ -169,7 +163,9 @@ export class AppStack extends cdk.Stack {
           existingApiSGId,
         );
       } else {
-        throw new Error('No existing security group ID provided');
+        throw new Error(
+          'No existing security group ID provided, proceed to create new security group',
+        );
       }
     } catch (e) {
       // Create new security group if lookup fails or no ID provided
@@ -178,21 +174,20 @@ export class AppStack extends cdk.Stack {
         `${projectName}ApiSecurityGroup`,
         {
           vpc,
-          description: 'Security group for API',
+          description: `Security group for API ${projectName}`,
           allowAllOutbound: true,
-        }
+        },
       );
       newSg.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
       apiSecurityGroup = newSg;
     }
-
 
     const albSecurityGroup = new ec2.SecurityGroup(
       this,
       `${projectName}AlbSecurityGroup`,
       {
         vpc,
-        description: 'Security group for API ALB',
+        description: `Security group for API ALB ${projectName}`,
         allowAllOutbound: true,
       },
     );
@@ -249,7 +244,7 @@ export class AppStack extends cdk.Stack {
       `${projectName}RedisParameterGroup`,
       {
         cacheParameterGroupFamily: 'redis7',
-        description: 'Redis parameter group for queue system',
+        description: `Redis parameter group for queue system ${projectName}`,
         properties: {
           'maxmemory-policy': 'noeviction', // noeviction - Redis will return errors instead of evicting data when memory is full
         },
@@ -270,7 +265,7 @@ export class AppStack extends cdk.Stack {
           this,
           `${projectName}RedisSubnetGroup`,
           {
-            description: 'Subnet group for Redis cluster',
+            description: `Subnet group for Redis cluster ${projectName}`,
             subnetIds: vpc.isolatedSubnets.map((subnet) => subnet.subnetId),
           },
         ).ref,
@@ -559,7 +554,7 @@ export class AppStack extends cdk.Stack {
      *
      *
      */
-      
+
     let bastionSecurityGroup: ec2.ISecurityGroup;
     try {
       if (existingBastionSGId) {
@@ -578,14 +573,14 @@ export class AppStack extends cdk.Stack {
         `${projectName}BastionSecurityGroup`,
         {
           vpc,
-          description: 'Security group for Bastion Host',
+          description: `Security group for Bastion Host ${projectName}`,
           allowAllOutbound: true,
-        }
+        },
       );
       newSg.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
       bastionSecurityGroup = newSg;
     }
-      
+
     // Allow SSH access
     bastionSecurityGroup.addIngressRule(
       ec2.Peer.anyIpv4(),
@@ -651,10 +646,14 @@ export class AppStack extends cdk.Stack {
     apiAlias.node.addDependency(apiEnvironment);
 
     // Only add dependencies if they are not imported resources
-    if (apiSecurityGroup instanceof ec2.SecurityGroup) {  // Only true for newly created security groups
-      apiEnvironment.addDependency(apiSecurityGroup.node.defaultChild as cdk.CfnResource);
+    if (apiSecurityGroup instanceof ec2.SecurityGroup) {
+      // Only true for newly created security groups
+      apiEnvironment.addDependency(
+        apiSecurityGroup.node.defaultChild as cdk.CfnResource,
+      );
     }
-    if (vpc instanceof ec2.Vpc) {  // Only true for newly created VPCs
+    if (vpc instanceof ec2.Vpc) {
+      // Only true for newly created VPCs
       apiEnvironment.addDependency(vpc.node.defaultChild as cdk.CfnResource);
     }
 

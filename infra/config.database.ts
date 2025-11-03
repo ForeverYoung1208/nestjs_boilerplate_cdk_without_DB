@@ -15,8 +15,8 @@ export const config: IDBStackConfig = {
   databaseName,
   databaseUsername,
   projectName,
-  apiSecurityGroupId: 'sg-06448216466b53b02',
-  bastionSecurityGroupId: 'sg-05fee3b362dfc7e7b',
+  apiSecurityGroupId: 'sg-0bb4dd29526889de0',
+  bastionSecurityGroupId: 'sg-0fd80d120909a5f2f',
   dbPasswordParameterName: '/boilerplate-dev/db-password',
-  vpcId: 'vpc-0acfffd30c393ad19',
-}
+  vpcId: 'vpc-0891653e25003641d',
+};

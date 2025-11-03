@@ -10,10 +10,10 @@ export interface IDBStackConfig {
   databaseName: string;
   databaseUsername: string;
   projectName: string;
-  apiSecurityGroupId: string;
-  bastionSecurityGroupId: string;
   vpcId: string;
-  dbPasswordParameterName: string;
+  apiSecurityGroupId?: string;
+  bastionSecurityGroupId?: string;
+  dbPasswordParameterName?: string;
 }
 
 export class DbStack extends cdk.Stack {
@@ -33,18 +33,6 @@ export class DbStack extends cdk.Stack {
   ) {
     super(scope, id, props);
 
-    const apiSecurityGroup = ec2.SecurityGroup.fromLookupById(
-      this,
-      `${projectName}ApiSecurityGroup`,
-      apiSecurityGroupId,
-    );
-
-    const bastionSecurityGroup = ec2.SecurityGroup.fromLookupById(
-      this,
-      `${projectName}BastionSecurityGroup`,
-      bastionSecurityGroupId,
-    );
-
     const vpc = ec2.Vpc.fromLookup(this, `${projectName}Vpc`, {
       vpcId,
     });
@@ -61,12 +49,6 @@ export class DbStack extends cdk.Stack {
         description: 'Security group for RDS',
         allowAllOutbound: true,
       },
-    );
-
-    dbSecurityGroup.addIngressRule(
-      apiSecurityGroup,
-      ec2.Port.tcp(5432),
-      'Allow PostgreSQL access from API',
     );
 
     const dbPasswordParameterValue = Array(10)
@@ -147,18 +129,44 @@ export class DbStack extends cdk.Stack {
     );
 
     // assign necessary access permissions
-    dbCluster.connections.allowFrom(
-      apiSecurityGroup,
-      ec2.Port.tcp(5432),
-      'Allow database access from API',
-    );
+
+    // allow api to access db
+    if (apiSecurityGroupId) {
+      const apiSecurityGroup = ec2.SecurityGroup.fromLookupById(
+        this,
+        `${projectName}ApiSecurityGroup`,
+        apiSecurityGroupId,
+      );
+      dbSecurityGroup.addIngressRule(
+        apiSecurityGroup,
+        ec2.Port.tcp(5432),
+        'Allow PostgreSQL access from API',
+      );
+      dbCluster.connections.allowFrom(
+        apiSecurityGroup,
+        ec2.Port.tcp(5432),
+        'Allow database access from API',
+      );
+    }
 
     // Allow bastion to access Aurora
-    dbSecurityGroup.addIngressRule(
-      bastionSecurityGroup,
-      ec2.Port.tcp(5432),
-      'Allow PostgreSQL access from Bastion',
-    );
+    if (bastionSecurityGroupId) {
+      const bastionSecurityGroup = ec2.SecurityGroup.fromLookupById(
+        this,
+        `${projectName}BastionSecurityGroup`,
+        bastionSecurityGroupId,
+      );
+      dbSecurityGroup.addIngressRule(
+        bastionSecurityGroup,
+        ec2.Port.tcp(5432),
+        'Allow PostgreSQL access from Bastion',
+      );
+      dbCluster.connections.allowFrom(
+        bastionSecurityGroup,
+        ec2.Port.tcp(5432),
+        'Allow database access from Bastion',
+      );
+    }
 
     new cdk.CfnOutput(this, `${projectName}DbClusterEndpoint`, {
       value: dbCluster.clusterEndpoint.socketAddress,
@@ -174,6 +182,14 @@ export class DbStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, `${projectName}Port`, {
       value: '5432',
+    });
+
+    new cdk.CfnOutput(this, `${projectName}DbPasswordParameterName`, {
+      value: dbPasswordParameterName || '',
+    });
+
+    new cdk.CfnOutput(this, `${projectName}DbPasswordParameterValue`, {
+      value: dbPasswordParameterValue,
     });
   }
 }

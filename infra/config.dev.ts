@@ -17,7 +17,6 @@ const fullSubDomainNameApi = `${subDomainNameApi}.${domainName}`;
 // user for deployment using CI/CD (will be created)
 const userDeploerName = `${projectName}-deployer`;
 
-// database name
 const companyName = 'Some Test Company Inc';
 
 console.info('using development config...');
@@ -29,7 +28,7 @@ export const config: IAppStackConfig = {
   userDeploerName,
   companyName,
   targetNodeEnv: 'development',
-  existingVpcId: 'vpc-0acfffd30c393ad19', // if set will be used, otherwise will be created
-  existingApiSGId: 'sg-06448216466b53b02', // if set will be used, otherwise will be created
-  existingBastionSGId: 'sg-05fee3b362dfc7e7b', // if set will be used, otherwise will be created
+  // existingVpcId: 'vpc-0acfffd30c393ad19', // if set will be used, otherwise will be created
+  // existingApiSGId: 'sg-06448216466b53b02', // if set will be used, otherwise will be created
+  // existingBastionSGId: 'sg-05fee3b362dfc7e7b', // if set will be used, otherwise will be created
 };
