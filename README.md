@@ -1,3 +1,14 @@
+# This repo implements the next deployment variant
+- API without worker, but processing queue by itself, in the EB environment.
+- Aurora PostgreSQL database.
+- ElastiCache Redis.
+
+API and Aurora cluster are deployed with different CloudFromation stacks.
+(use `cdk deploy --context targetEnv=dev` to deploy API to dev environment)
+(use `cdk deploy --context targetEnv=prod` to deploy API to production environment)
+(use `cdk deploy --context targetEnv=stage` to deploy API to stage environment)
+(use `cdk deploy --context targetEnv=devDatabase` to deploy Aurora cluster to dev environment).
+Deployment of Aurora for stage or production environments isn't implemented yet but you can change config.dev-database.ts to archieve this.
 
 
 ## MIGRATIONS
