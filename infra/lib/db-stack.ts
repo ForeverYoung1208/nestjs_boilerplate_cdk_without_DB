@@ -7,9 +7,9 @@ import { SecretValue } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 
 export interface IDBStackConfig {
-  databaseName: string;
+  databaseNameWithEnv: string;
   databaseUsername: string;
-  projectName: string;
+  projectNameWithEnv: string;
   vpcId: string;
   apiSecurityGroupId?: string;
   bastionSecurityGroupId?: string;
@@ -21,9 +21,9 @@ export class DbStack extends cdk.Stack {
     scope: Construct,
     id: string,
     {
-      databaseName,
+      databaseNameWithEnv,
       databaseUsername,
-      projectName,
+      projectNameWithEnv,
       apiSecurityGroupId,
       bastionSecurityGroupId,
       vpcId,
@@ -33,7 +33,7 @@ export class DbStack extends cdk.Stack {
   ) {
     super(scope, id, props);
 
-    const vpc = ec2.Vpc.fromLookup(this, `${projectName}Vpc`, {
+    const vpc = ec2.Vpc.fromLookup(this, `${projectNameWithEnv}Vpc`, {
       vpcId,
     });
 
@@ -43,7 +43,7 @@ export class DbStack extends cdk.Stack {
     // Aurora PostgreSQL Serverless
     const dbSecurityGroup = new ec2.SecurityGroup(
       this,
-      `${projectName}DatabaseSecurityGroup`,
+      `${projectNameWithEnv}DatabaseSecurityGroup`,
       {
         vpc,
         description: 'Security group for RDS',
@@ -57,7 +57,7 @@ export class DbStack extends cdk.Stack {
       .join('');
 
     // Upsert DB password parameter
-    new cr.AwsCustomResource(this, `${projectName}DbPasswordUpsert`, {
+    new cr.AwsCustomResource(this, `${projectNameWithEnv}DbPasswordUpsert`, {
       onCreate: {
         service: 'SSM',
         action: 'putParameter',
@@ -92,35 +92,57 @@ export class DbStack extends cdk.Stack {
       }),
     });
 
-    const dbCluster = new rds.DatabaseCluster(this, `${projectName}AuroraDB`, {
-      engine,
+    // Get appropriate subnets for RDS - never use public subnets
+    let dbSubnets: ec2.ISubnet[];
+    if (vpc.isolatedSubnets.length > 0) {
+      dbSubnets = vpc.isolatedSubnets;
+    } else if (vpc.privateSubnets.length > 0) {
+      dbSubnets = vpc.privateSubnets;
+    } else {
+      throw new Error('No private or isolated subnets available for RDS. RDS cannot be placed in public subnets for security reasons.');
+    }
+
+    // Create new DB subnet group
+    const dbSubnetGroup = new rds.SubnetGroup(this, `${projectNameWithEnv}NewDbSubnetGroup`, {
+      description: `DB subnet group for ${projectNameWithEnv} in new VPC`,
       vpc,
       vpcSubnets: {
-        subnetType: ec2.SubnetType.PRIVATE_ISOLATED,
+        subnets: dbSubnets,
       },
-      securityGroups: [dbSecurityGroup],
-      writer: rds.ClusterInstance.serverlessV2('writer'),
-      serverlessV2MinCapacity: 0.5, // Minimum ACU (0.5 is the minimum?)
-      serverlessV2MaxCapacity: 1, // Maximum ACU
-      parameterGroup: new rds.ParameterGroup(
-        this,
-        `${projectName}RdsParameterGroup`,
-        {
-          engine,
-          parameters: {
-            // Terminate idle session for Aurora Serverless V2 auto-pause
-            idle_session_timeout: '60000',
-          },
-        },
-      ),
-
-      defaultDatabaseName: databaseName,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-      credentials: rds.Credentials.fromPassword(
-        databaseUsername,
-        SecretValue.unsafePlainText(dbPasswordParameterValue),
-      ),
     });
+
+    // create cluster with dev database as default one
+    const dbCluster = new rds.DatabaseCluster(
+      this,
+      `${projectNameWithEnv}AuroraDB`,
+      {
+        engine,
+        vpc,
+        subnetGroup: dbSubnetGroup,
+        securityGroups: [dbSecurityGroup],
+        writer: rds.ClusterInstance.serverlessV2('writer'),
+        serverlessV2MinCapacity: 0.5, // Minimum ACU (0.5 is the minimum?)
+        serverlessV2MaxCapacity: 1, // Maximum ACU
+        parameterGroup: new rds.ParameterGroup(
+          this,
+          `${projectNameWithEnv}RdsParameterGroup`,
+          {
+            engine,
+            parameters: {
+              // Terminate idle session for Aurora Serverless V2 auto-pause
+              idle_session_timeout: '60000',
+            },
+          },
+        ),
+
+        defaultDatabaseName: databaseNameWithEnv,
+        removalPolicy: cdk.RemovalPolicy.DESTROY,
+        credentials: rds.Credentials.fromPassword(
+          databaseUsername,
+          SecretValue.unsafePlainText(dbPasswordParameterValue),
+        ),
+      },
+    );
 
     // workaround to set minimum capacity to 0 to allow full stop of the database if not used
     (dbCluster.node.defaultChild as cdk.CfnResource).addPropertyOverride(
@@ -134,7 +156,7 @@ export class DbStack extends cdk.Stack {
     if (apiSecurityGroupId) {
       const apiSecurityGroup = ec2.SecurityGroup.fromLookupById(
         this,
-        `${projectName}ApiSecurityGroup`,
+        `${projectNameWithEnv}ApiSecurityGroup`,
         apiSecurityGroupId,
       );
       dbSecurityGroup.addIngressRule(
@@ -153,7 +175,7 @@ export class DbStack extends cdk.Stack {
     if (bastionSecurityGroupId) {
       const bastionSecurityGroup = ec2.SecurityGroup.fromLookupById(
         this,
-        `${projectName}BastionSecurityGroup`,
+        `${projectNameWithEnv}BastionSecurityGroup`,
         bastionSecurityGroupId,
       );
       dbSecurityGroup.addIngressRule(
@@ -168,27 +190,27 @@ export class DbStack extends cdk.Stack {
       );
     }
 
-    new cdk.CfnOutput(this, `${projectName}DbClusterEndpoint`, {
+    new cdk.CfnOutput(this, `${projectNameWithEnv}DbClusterEndpoint`, {
       value: dbCluster.clusterEndpoint.socketAddress,
     });
 
-    new cdk.CfnOutput(this, `${projectName}DatabaseName`, {
-      value: databaseName,
+    new cdk.CfnOutput(this, `${projectNameWithEnv}DatabaseName`, {
+      value: databaseNameWithEnv,
     });
 
-    new cdk.CfnOutput(this, `${projectName}DbUsername`, {
+    new cdk.CfnOutput(this, `${projectNameWithEnv}DbUsername`, {
       value: databaseUsername,
     });
 
-    new cdk.CfnOutput(this, `${projectName}Port`, {
+    new cdk.CfnOutput(this, `${projectNameWithEnv}Port`, {
       value: '5432',
     });
 
-    new cdk.CfnOutput(this, `${projectName}DbPasswordParameterName`, {
+    new cdk.CfnOutput(this, `${projectNameWithEnv}DbPasswordParameterName`, {
       value: dbPasswordParameterName || '',
     });
 
-    new cdk.CfnOutput(this, `${projectName}DbPasswordParameterValue`, {
+    new cdk.CfnOutput(this, `${projectNameWithEnv}DbPasswordParameterValue`, {
       value: dbPasswordParameterValue,
     });
   }

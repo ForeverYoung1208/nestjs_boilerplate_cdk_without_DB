@@ -13,14 +13,15 @@ import { Construct } from 'constructs';
 
 export interface IAppStackConfig {
   domainName: string;
-  projectName: string;
+  projectNameWithEnv: string;
   fullSubDomainNameApi: string;
   userDeploerName: string;
   companyName: string;
   targetNodeEnv: string;
   existingVpcId?: string;
   existingApiSGId?: string;
-  existingBastionSGId?: string;  
+  existingBastionSGId?: string;
+  existingAlbSGId?: string;
 }
 
 export class AppStack extends cdk.Stack {
@@ -34,7 +35,7 @@ export class AppStack extends cdk.Stack {
 
     const {
       domainName,
-      projectName,
+      projectNameWithEnv,
       fullSubDomainNameApi,
       userDeploerName,
       companyName,
@@ -42,6 +43,7 @@ export class AppStack extends cdk.Stack {
       existingVpcId,
       existingApiSGId,
       existingBastionSGId,
+      existingAlbSGId,
     } = config;
 
     /**
@@ -65,32 +67,49 @@ export class AppStack extends cdk.Stack {
       .join('');
     const apiKeySSMParameter = new ssm.StringParameter(
       this,
-      `${projectName}ApiKeyParameter`,
+      `${projectNameWithEnv}ApiKeyParameter`,
       {
-        parameterName: `/${projectName}/api-key`,
+        parameterName: `/${projectNameWithEnv}/api-key`,
         stringValue: apiKeySecretValue,
-        description: `API key for the ${projectName} application`,
+        description: `API key for the ${projectNameWithEnv} application`,
       },
     );
 
-    const dbPasswordSSMParameter = new ssm.StringParameter(
-      this,
-      `${projectName}DbPasswordParameter`,
-      {
-        parameterName: `/${projectName}/db-password`,
-        stringValue: 'place-here-db-password', // This will be used if parameter doesn't exist
-        description: `Database password for ${projectName}`,
-      },
-    );
-    dbPasswordSSMParameter.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
+    const dbPasswordSSMParameterName = `/${projectNameWithEnv}/db-password`;
+    let dbPasswordSSMParameter: ssm.IStringParameter;
+
+    try {
+      dbPasswordSSMParameter =
+        ssm.StringParameter.fromSecureStringParameterAttributes(
+          this,
+          `${projectNameWithEnv}DbPasswordParameter`,
+          {
+            parameterName: dbPasswordSSMParameterName,
+            // If you need to specify the version
+            // version: 1
+          },
+        );
+    } catch (e) {
+      // Create new security group if lookup fails or no ID provided
+      dbPasswordSSMParameter = new ssm.StringParameter(
+        this,
+        `${projectNameWithEnv}DbPasswordParameter`,
+        {
+          parameterName: dbPasswordSSMParameterName,
+          stringValue: 'place-here-db-password', // This will be used if parameter doesn't exist
+          description: `Database password for ${projectNameWithEnv}`,
+        },
+      );
+      dbPasswordSSMParameter.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
+    }
 
     const mailPasswordSSMParameter = new ssm.StringParameter(
       this,
-      `${projectName}MailPasswordParameter`,
+      `${projectNameWithEnv}MailPasswordParameter`,
       {
-        parameterName: `/${projectName}/mail-password`,
+        parameterName: `/${projectNameWithEnv}/mail-password`,
         stringValue: 'place-here-mail-password',
-        description: `Mail password for the ${projectName} application`,
+        description: `Mail password for the ${projectNameWithEnv} application`,
       },
     );
 
@@ -113,12 +132,12 @@ export class AppStack extends cdk.Stack {
           'No existing VPC ID provided, proceed to create new VPC',
         );
       }
-      vpc = ec2.Vpc.fromLookup(this, `${projectName}Vpc`, {
+      vpc = ec2.Vpc.fromLookup(this, `${projectNameWithEnv}Vpc`, {
         vpcId: existingVpcId,
       });
     } catch (e) {
       // Create new VPC if it doesn't exist
-      const newVpc = new ec2.Vpc(this, `${projectName}VPC`, {
+      const newVpc = new ec2.Vpc(this, `${projectNameWithEnv}VPC`, {
         ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/16'),
         maxAzs: 2, // Need 2 AZs for Aurora
         natGateways: 0,
@@ -135,19 +154,36 @@ export class AppStack extends cdk.Stack {
           },
         ],
       });
+
+      // Apply RETAIN policy to all subnets and vpc
+      newVpc.publicSubnets.forEach((subnet) => {
+        (subnet.node.defaultChild as ec2.CfnSubnet).applyRemovalPolicy(
+          cdk.RemovalPolicy.RETAIN,
+        );
+      });
+
+      newVpc.isolatedSubnets.forEach((subnet) => {
+        (subnet.node.defaultChild as ec2.CfnSubnet).applyRemovalPolicy(
+          cdk.RemovalPolicy.RETAIN,
+        );
+      });
       newVpc.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
       vpc = newVpc;
     }
 
     //Lookup the zone based on domain name
-    const zone = route53.HostedZone.fromLookup(this, `${projectName}Zone`, {
-      domainName: domainName,
-    });
+    const zone = route53.HostedZone.fromLookup(
+      this,
+      `${projectNameWithEnv}Zone`,
+      {
+        domainName: domainName,
+      },
+    );
 
     // ACM Certificate
     const certificate = new certificatemanager.Certificate(
       this,
-      `${projectName}Certificate`,
+      `${projectNameWithEnv}Certificate`,
       {
         domainName: fullSubDomainNameApi,
         validation: certificatemanager.CertificateValidation.fromDns(zone),
@@ -159,7 +195,7 @@ export class AppStack extends cdk.Stack {
       if (existingApiSGId) {
         apiSecurityGroup = ec2.SecurityGroup.fromLookupById(
           this,
-          `${projectName}ApiSecurityGroup`,
+          `${projectNameWithEnv}ApiSecurityGroup`,
           existingApiSGId,
         );
       } else {
@@ -171,10 +207,10 @@ export class AppStack extends cdk.Stack {
       // Create new security group if lookup fails or no ID provided
       const newSg = new ec2.SecurityGroup(
         this,
-        `${projectName}ApiSecurityGroup`,
+        `${projectNameWithEnv}ApiSecurityGroup`,
         {
           vpc,
-          description: `Security group for API ${projectName}`,
+          description: `Security group for API ${projectNameWithEnv}`,
           allowAllOutbound: true,
         },
       );
@@ -182,15 +218,32 @@ export class AppStack extends cdk.Stack {
       apiSecurityGroup = newSg;
     }
 
-    const albSecurityGroup = new ec2.SecurityGroup(
-      this,
-      `${projectName}AlbSecurityGroup`,
-      {
-        vpc,
-        description: `Security group for API ALB ${projectName}`,
-        allowAllOutbound: true,
-      },
-    );
+    let albSecurityGroup: ec2.ISecurityGroup;
+    try {
+      if (existingAlbSGId) {
+        albSecurityGroup = ec2.SecurityGroup.fromLookupById(
+          this,
+          `${projectNameWithEnv}AlbSecurityGroup`,
+          existingAlbSGId,
+        );
+      } else {
+        throw new Error(
+          'No existing security group ID provided, proceed to create new security group',
+        );
+      }
+    } catch (e) {
+      // Create new security group if lookup fails or no ID provided
+      albSecurityGroup = new ec2.SecurityGroup(
+        this,
+        `${projectNameWithEnv}AlbSecurityGroup`,
+        {
+          vpc,
+          description: `Security group for API ALB ${projectNameWithEnv}`,
+          allowAllOutbound: true,
+        },
+      );
+      albSecurityGroup.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
+    }
 
     apiSecurityGroup.addIngressRule(
       ec2.Peer.securityGroupId(albSecurityGroup.securityGroupId),
@@ -225,7 +278,7 @@ export class AppStack extends cdk.Stack {
     // ElastiCache Redis
     const redisSecurityGroup = new ec2.SecurityGroup(
       this,
-      `${projectName}RedisSG`,
+      `${projectNameWithEnv}RedisSG`,
       {
         vpc,
         allowAllOutbound: true,
@@ -241,19 +294,27 @@ export class AppStack extends cdk.Stack {
     // Redis parameter group with noeviction policy
     const redisParameterGroup = new elasticache.CfnParameterGroup(
       this,
-      `${projectName}RedisParameterGroup`,
+      `${projectNameWithEnv}RedisParameterGroup`,
       {
         cacheParameterGroupFamily: 'redis7',
-        description: `Redis parameter group for queue system ${projectName}`,
+        description: `Redis parameter group for queue system ${projectNameWithEnv}`,
         properties: {
           'maxmemory-policy': 'noeviction', // noeviction - Redis will return errors instead of evicting data when memory is full
         },
       },
     );
 
+    // Get appropriate subnets for Redis
+    const redisSubnets =
+      vpc.isolatedSubnets.length > 0
+        ? vpc.isolatedSubnets
+        : vpc.privateSubnets.length > 0
+          ? vpc.privateSubnets
+          : vpc.publicSubnets;
+
     const redis = new elasticache.CfnCacheCluster(
       this,
-      `${projectName}RedisCluster`,
+      `${projectNameWithEnv}RedisCluster`,
       {
         cacheNodeType: 'cache.t3.micro',
         engine: 'redis',
@@ -263,10 +324,10 @@ export class AppStack extends cdk.Stack {
         vpcSecurityGroupIds: [redisSecurityGroup.securityGroupId],
         cacheSubnetGroupName: new elasticache.CfnSubnetGroup(
           this,
-          `${projectName}RedisSubnetGroup`,
+          `${projectNameWithEnv}RedisSubnetGroup`,
           {
-            description: `Subnet group for Redis cluster ${projectName}`,
-            subnetIds: vpc.isolatedSubnets.map((subnet) => subnet.subnetId),
+            description: `Subnet group for Redis cluster ${projectNameWithEnv}`,
+            subnetIds: redisSubnets.map((subnet) => subnet.subnetId),
           },
         ).ref,
       },
@@ -285,7 +346,7 @@ export class AppStack extends cdk.Stack {
     // Create an S3 bucket to use while deploying with GA workflows using elastic beanstalk
 
     const ebAppBucket = new s3.Bucket(this, 'ElasticBeanstalkAppBucket', {
-      bucketName: `${projectName.toLowerCase()}-eb-artifacts`,
+      bucketName: `${projectNameWithEnv.toLowerCase()}-eb-artifacts`,
       versioned: true,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
@@ -293,7 +354,7 @@ export class AppStack extends cdk.Stack {
 
     // Create an S3 asset for CDK to manage application code
 
-    const appAsset = new s3assets.Asset(this, `${projectName}ApiAsset`, {
+    const appAsset = new s3assets.Asset(this, `${projectNameWithEnv}ApiAsset`, {
       path: '../', // Point to parent directory
       exclude: [
         '.git',
@@ -311,26 +372,28 @@ export class AppStack extends cdk.Stack {
     });
 
     // Create IAM role for EC2 instances
-    const ebInstanceRole = new iam.Role(this, `${projectName}EBInstanceRole`, {
-      assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
-      managedPolicies: [
-        iam.ManagedPolicy.fromAwsManagedPolicyName(
-          'AWSElasticBeanstalkWebTier',
-        ),
-        iam.ManagedPolicy.fromAwsManagedPolicyName(
-          'AWSElasticBeanstalkWorkerTier',
-        ),
-      ],
-    });
+    const ebInstanceRole = new iam.Role(
+      this,
+      `${projectNameWithEnv}EBInstanceRole`,
+      {
+        assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
+        managedPolicies: [
+          iam.ManagedPolicy.fromAwsManagedPolicyName(
+            'AWSElasticBeanstalkWebTier',
+          ),
+          iam.ManagedPolicy.fromAwsManagedPolicyName(
+            'AWSElasticBeanstalkWorkerTier',
+          ),
+        ],
+      },
+    );
 
     // Add Secrets Manager permissions
     ebInstanceRole.addToPolicy(
       new iam.PolicyStatement({
         effect: iam.Effect.ALLOW,
         actions: ['ssm:GetParameter', 'ssm:GetParameters'],
-        resources: [
-          `arn:aws:ssm:${this.region}:${this.account}:parameter/${projectName}/*`,
-        ],
+        resources: [`arn:aws:ssm:${this.region}:${this.account}:*`],
       }),
     );
     ebInstanceRole.addToPolicy(
@@ -350,7 +413,7 @@ export class AppStack extends cdk.Stack {
     // Create instance profile
     const ebInstanceProfile = new iam.CfnInstanceProfile(
       this,
-      `${projectName}EBInstanceProfile`,
+      `${projectNameWithEnv}EBInstanceProfile`,
       {
         roles: [ebInstanceRole.roleName],
       },
@@ -359,9 +422,9 @@ export class AppStack extends cdk.Stack {
     // Create Elastic Beanstalk application
     const app = new elasticbeanstalk.CfnApplication(
       this,
-      `${projectName}Application`,
+      `${projectNameWithEnv}Application`,
       {
-        applicationName: `${projectName}-application`,
+        applicationName: `${projectNameWithEnv}-application`,
       },
     );
     if (!app.applicationName) {
@@ -370,18 +433,36 @@ export class AppStack extends cdk.Stack {
 
     const versionLabel = this.createApplicationVersion(
       app,
-      `${projectName}AppVersion`,
+      `${projectNameWithEnv}AppVersion`,
       appAsset,
     );
+
+    // Create SSM parameters with mock values
+    const dbHostParam = new ssm.StringParameter(this, 'DbHostParam', {
+      parameterName: `/${projectNameWithEnv}/db/host`,
+      stringValue: 'localhost',
+    });
+
+    const dbPortParam = new ssm.StringParameter(this, 'DbPortParam', {
+      parameterName: `/${projectNameWithEnv}/db/port`,
+      stringValue: '5432',
+    });
+
+    const dbNameParam = new ssm.StringParameter(this, 'DbNameParam', {
+      parameterName: `/${projectNameWithEnv}/db/name`,
+      stringValue: 'mydb',
+    });
+
+    const dbUsernameParam = new ssm.StringParameter(this, 'DbUsernameParam', {
+      parameterName: `/${projectNameWithEnv}/db/username`,
+      stringValue: 'postgres',
+    });
+
     const envVars = [
       ...this.createEnvironmentVariables({
         NODE_ENV: targetNodeEnv,
         PORT: '3000',
         SITE_ORIGIN: `https://${fullSubDomainNameApi}`,
-        DB_HOST: 'change to real dbHost',
-        DB_PORT: 'change to real dbPort',
-        DB_DATABASE: 'change to real dbName',
-        DB_USERNAME: 'change to real dbUsername',
         REDIS_HOST: redis.attrRedisEndpointAddress,
         REDIS_PORT: redis.attrRedisEndpointPort,
         TYPEORM_LOGGING: 'false',
@@ -393,8 +474,29 @@ export class AppStack extends cdk.Stack {
         MAIL_USERNAME: 'siafin2010@gmail.com',
         MAIL_FROM_EMAIL: 'ihor.shcherbyna@clockwise.software',
         COMPANY_NAME: companyName,
+        PROJECT_NAME: projectNameWithEnv,
       }),
 
+      {
+        namespace: 'aws:elasticbeanstalk:application:environmentsecrets',
+        optionName: 'DB_HOST',
+        value: dbHostParam.parameterArn,
+      },
+      {
+        namespace: 'aws:elasticbeanstalk:application:environmentsecrets',
+        optionName: 'DB_PORT',
+        value: dbPortParam.parameterArn,
+      },
+      {
+        namespace: 'aws:elasticbeanstalk:application:environmentsecrets',
+        optionName: 'DB_DATABASE',
+        value: dbNameParam.parameterArn,
+      },
+      {
+        namespace: 'aws:elasticbeanstalk:application:environmentsecrets',
+        optionName: 'DB_USERNAME',
+        value: dbUsernameParam.parameterArn,
+      },
       {
         namespace: 'aws:elasticbeanstalk:application:environmentsecrets',
         optionName: 'API_KEY',
@@ -412,15 +514,19 @@ export class AppStack extends cdk.Stack {
       },
     ];
 
-    const keyPairApi = new ec2.CfnKeyPair(this, `${projectName}ApiKeyPair`, {
-      keyName: `${projectName}-api-key`,
-    });
+    const keyPairApi = new ec2.CfnKeyPair(
+      this,
+      `${projectNameWithEnv}ApiKeyPair`,
+      {
+        keyName: `${projectNameWithEnv}-api-key`,
+      },
+    );
 
     const apiEnvironment = new elasticbeanstalk.CfnEnvironment(
       this,
-      `${projectName}ApiEnvironment`,
+      `${projectNameWithEnv}ApiEnvironment`,
       {
-        environmentName: `${projectName}-Api-Environment`,
+        environmentName: `${projectNameWithEnv}-Api-Environment`,
         applicationName: app.applicationName,
         tier: {
           name: 'WebServer',
@@ -560,7 +666,7 @@ export class AppStack extends cdk.Stack {
       if (existingBastionSGId) {
         bastionSecurityGroup = ec2.SecurityGroup.fromLookupById(
           this,
-          `${projectName}BastionSecurityGroup`,
+          `${projectNameWithEnv}BastionSecurityGroup`,
           existingBastionSGId,
         );
       } else {
@@ -570,10 +676,10 @@ export class AppStack extends cdk.Stack {
       // Create new security group if lookup fails or no ID provided
       const newSg = new ec2.SecurityGroup(
         this,
-        `${projectName}BastionSecurityGroup`,
+        `${projectNameWithEnv}BastionSecurityGroup`,
         {
           vpc,
-          description: `Security group for Bastion Host ${projectName}`,
+          description: `Security group for Bastion Host ${projectNameWithEnv}`,
           allowAllOutbound: true,
         },
       );
@@ -588,12 +694,16 @@ export class AppStack extends cdk.Stack {
       'Allow SSH',
     );
 
-    const keyPair = new ec2.CfnKeyPair(this, `${projectName}BastionKeyPair`, {
-      keyName: `${projectName}-bastion-key`,
-    });
+    const keyPair = new ec2.CfnKeyPair(
+      this,
+      `${projectNameWithEnv}BastionKeyPair`,
+      {
+        keyName: `${projectNameWithEnv}-bastion-key`,
+      },
+    );
 
     // Create bastion host
-    const bastion = new ec2.Instance(this, `${projectName}BastionHost`, {
+    const bastion = new ec2.Instance(this, `${projectNameWithEnv}BastionHost`, {
       vpc,
       vpcSubnets: {
         subnetType: ec2.SubnetType.PUBLIC,
@@ -637,11 +747,15 @@ export class AppStack extends cdk.Stack {
      *
      */
 
-    const apiAlias = new route53.CnameRecord(this, `${projectName}ApiAlias`, {
-      zone,
-      recordName: fullSubDomainNameApi,
-      domainName: apiEnvironment.attrEndpointUrl,
-    });
+    const apiAlias = new route53.CnameRecord(
+      this,
+      `${projectNameWithEnv}ApiAlias`,
+      {
+        zone,
+        recordName: fullSubDomainNameApi,
+        domainName: apiEnvironment.attrEndpointUrl,
+      },
+    );
 
     apiAlias.node.addDependency(apiEnvironment);
 
@@ -658,20 +772,20 @@ export class AppStack extends cdk.Stack {
     }
 
     // Add IAM user to deploy code
-    const userDeploer = new iam.User(this, `${projectName}Deployer`, {
+    const userDeploer = new iam.User(this, `${projectNameWithEnv}Deployer`, {
       userName: userDeploerName,
     });
 
     // user policy to deploy code
     userDeploer.attachInlinePolicy(
-      new iam.Policy(this, `${projectName}DeployerPolicy`, {
-        policyName: `publish-to-${projectName}`,
+      new iam.Policy(this, `${projectNameWithEnv}DeployerPolicy`, {
+        policyName: `publish-to-${projectNameWithEnv}`,
         statements: [
           new iam.PolicyStatement({
             actions: ['ssm:GetParameter'],
             effect: iam.Effect.ALLOW,
             resources: [
-              `arn:aws:ssm:${this.region}:${this.account}:parameter/${projectName}*`,
+              `arn:aws:ssm:${this.region}:${this.account}:parameter/${projectNameWithEnv}*`,
             ],
           }),
 
@@ -701,8 +815,8 @@ export class AppStack extends cdk.Stack {
               's3:DeleteObject',
             ],
             resources: [
-              `arn:aws:s3:::${projectName.toLowerCase()}-eb-artifacts`,
-              `arn:aws:s3:::${projectName.toLowerCase()}-eb-artifacts/*`,
+              `arn:aws:s3:::${projectNameWithEnv.toLowerCase()}-eb-artifacts`,
+              `arn:aws:s3:::${projectNameWithEnv.toLowerCase()}-eb-artifacts/*`,
             ],
           }),
           new iam.PolicyStatement({
@@ -729,9 +843,9 @@ export class AppStack extends cdk.Stack {
               'elasticbeanstalk:UpdateEnvironment',
             ],
             resources: [
-              `arn:aws:elasticbeanstalk:${this.region}:${this.account}:application/${projectName}-application`,
-              `arn:aws:elasticbeanstalk:${this.region}:${this.account}:applicationversion/${projectName}-application/*`,
-              `arn:aws:elasticbeanstalk:${this.region}:${this.account}:environment/${projectName}-application/${projectName}*`,
+              `arn:aws:elasticbeanstalk:${this.region}:${this.account}:application/${projectNameWithEnv}-application`,
+              `arn:aws:elasticbeanstalk:${this.region}:${this.account}:applicationversion/${projectNameWithEnv}-application/*`,
+              `arn:aws:elasticbeanstalk:${this.region}:${this.account}:environment/${projectNameWithEnv}-application/${projectNameWithEnv}*`,
             ],
           }),
           new iam.PolicyStatement({

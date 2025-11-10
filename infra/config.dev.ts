@@ -1,7 +1,7 @@
 import { IAppStackConfig } from './lib/app-stack';
 
 // define project name (any) - will be used as part of naming for some resources like docker image, database, etc.
-const projectShortName = 'boilerplate';
+const projectShortName = 'boilerplateNEW';
 
 // define postfix for environment resources to specify
 let suffix = '-dev';
@@ -23,12 +23,13 @@ console.info('using development config...');
 
 export const config: IAppStackConfig = {
   domainName,
-  projectName,
+  projectNameWithEnv: projectName,
   fullSubDomainNameApi,
   userDeploerName,
   companyName,
   targetNodeEnv: 'development',
-  // existingVpcId: 'vpc-0acfffd30c393ad19', // if set will be used, otherwise will be created
-  // existingApiSGId: 'sg-06448216466b53b02', // if set will be used, otherwise will be created
-  // existingBastionSGId: 'sg-05fee3b362dfc7e7b', // if set will be used, otherwise will be created
+  // existingVpcId: '', // if set will be used, otherwise will be created
+  // existingApiSGId: '', // if set will be used, otherwise will be created
+  // existingBastionSGId: '', // if set will be used, otherwise will be created
+  // existingAlbSGId: '', // if set will be used, otherwise will be created
 };

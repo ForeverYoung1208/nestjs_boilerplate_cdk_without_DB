@@ -23,7 +23,7 @@ console.info('using staging config...');
 
 export const config: IAppStackConfig = {
   domainName,
-  projectName,
+  projectNameWithEnv: projectName,
   fullSubDomainNameApi,
   userDeploerName,
   companyName,

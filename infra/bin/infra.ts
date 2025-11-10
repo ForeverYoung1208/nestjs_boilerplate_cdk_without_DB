@@ -22,12 +22,12 @@ switch (targetEnv) {
   case 'prod':
     config = require('../config.prod').config;
     break;
-  case 'database':
-    config = require('../config.database').config;
+  case 'devDatabase':
+    config = require('../config.dev-database').config;
     break;
   default:
     throw new Error(
-      'target targetEnv is not defined; use `npx cdk deploy --context targetEnv=dev` , where targetEnv= dev | stage | prod | database',
+      'target targetEnv is not defined; use `npx cdk deploy --context targetEnv=dev` , where targetEnv= dev | stage | prod | devDatabase',
     );
 }
 
@@ -41,31 +41,36 @@ try {
   process.exit(1);
 }
 
-if (targetEnv !== 'database') {
-  new AppStack(app, `${config.projectName}Stack`, config as IAppStackConfig, {
-    /* If you don't specify 'env', this stack will be environment-agnostic.
-     * Account/Region-dependent features and context lookups will not work,
-     * but a single synthesized template can be deployed anywhere. */
+if (['dev', 'stage', 'prod'].includes(targetEnv)) {
+  new AppStack(
+    app,
+    `${(config as IAppStackConfig).projectNameWithEnv}Stack`,
+    config as IAppStackConfig,
+    {
+      /* If you don't specify 'env', this stack will be environment-agnostic.
+       * Account/Region-dependent features and context lookups will not work,
+       * but a single synthesized template can be deployed anywhere. */
 
-    /* Uncomment the next line to specialize this stack for the AWS Account
-     * and Region that are implied by the current CLI configuration. */
-    env: {
-      account: process.env.CDK_DEFAULT_ACCOUNT,
-      region: process.env.CDK_DEFAULT_REGION,
+      /* Uncomment the next line to specialize this stack for the AWS Account
+       * and Region that are implied by the current CLI configuration. */
+      env: {
+        account: process.env.CDK_DEFAULT_ACCOUNT,
+        region: process.env.CDK_DEFAULT_REGION,
+      },
+
+      /* Uncomment the next line if you know exactly what Account and Region you
+       * want to deploy the stack to. */
+      // env: { account: '123456789012', region: 'us-east-1' },
+
+      /* For more information, see https://docs.aws.amazon.com/cdk/latest/guide/environments.html */
     },
-
-    /* Uncomment the next line if you know exactly what Account and Region you
-     * want to deploy the stack to. */
-    // env: { account: '123456789012', region: 'us-east-1' },
-
-    /* For more information, see https://docs.aws.amazon.com/cdk/latest/guide/environments.html */
-  });
+  );
 }
 
-if (targetEnv === 'database') {
+if (targetEnv === 'devDatabase') {
   new DbStack(
     app,
-    `${config.projectName}DatabaseStack`,
+    `${(config as IDBStackConfig).projectNameWithEnv}DatabaseStack`,
     config as IDBStackConfig,
     {
       /* If you don't specify 'env', this stack will be environment-agnostic.
